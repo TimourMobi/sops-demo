@@ -192,19 +192,81 @@ open http://localhost:3000
     └── kustomization.yaml        # Monitoring Kustomization
 ```
 
-## Wichtige Befehle
+## Wichtige SOPS und Flux Befehle
+
+### SOPS Befehle für Secret Management
 
 ```bash
-# Secret entschlüsseln (zum Anzeigen)
+# Secret entschlüsseln und anzeigen
+export SOPS_AGE_KEY_FILE=age-key.txt
 sops --decrypt monitoring/grafana-secret.yaml
 
-# Secret bearbeiten
+# Secret direkt bearbeiten (öffnet Editor)
 sops monitoring/grafana-secret.yaml
 
-# Flux Status prüfen
+# Neues Secret verschlüsseln
+sops --encrypt --in-place secret-plain.yaml
+
+# Secret nur bestimmte Felder verschlüsseln (gemäß .sops.yaml regex)
+sops --encrypt --in-place new-secret.yaml
+
+# SOPS Konfiguration testen
+sops --encrypt /dev/stdin <<< "test: value"
+```
+
+### Flux Befehle für GitOps Management
+
+```bash
+# Alle Flux Resources anzeigen
 flux get all
 
-# Cluster löschen
+# Nur Kustomizations anzeigen
+flux get kustomizations
+
+# Nur HelmReleases anzeigen
+flux get helmreleases
+
+# Spezifische Resource reconcilen (force sync)
+flux reconcile kustomization flux-system
+
+# HelmRelease force sync
+flux reconcile helmrelease grafana -n monitoring
+
+# Flux Events anzeigen
+flux events
+
+# Flux Logs anzeigen
+flux logs
+```
+
+### Kubernetes Debug Befehle
+
+```bash
+# Secret Inhalte prüfen (base64 decoded)
+kubectl get secret grafana-admin -n monitoring -o jsonpath='{.data.admin-user}' | base64 -d
+kubectl get secret grafana-admin -n monitoring -o jsonpath='{.data.admin-password}' | base64 -d
+
+# Pod Logs anzeigen
+kubectl logs -n monitoring deployment/grafana
+
+# HelmRelease Status detailliert
+kubectl describe helmrelease grafana -n monitoring
+
+# Events in monitoring namespace
+kubectl get events -n monitoring --sort-by='.lastTimestamp'
+```
+
+### Cluster Management
+
+```bash
+# Cluster Status prüfen
+kubectl cluster-info
+kubectl get nodes
+
+# Port-Forward starten
+kubectl port-forward -n monitoring svc/grafana 3000:80
+
+# Cluster komplett löschen
 k3d cluster delete sops-demo
 ```
 
