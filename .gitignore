@@ -1,6 +1,10 @@
 # Age private key - NEVER commit this!
 age-key.txt
+*.agekey
 
 # Temporary files
 *-plain.yaml
 *.tmp
+
+# Test files - ignore for demo
+# (In production, these should be properly secured)
