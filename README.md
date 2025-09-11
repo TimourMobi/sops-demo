@@ -9,34 +9,45 @@ Dieses Repository demonstriert die Verwendung von SOPS (Secrets OPerationS) mit 
 - `k3d` für lokale Kubernetes Cluster (`brew install k3d`)
 - `kubectl` für Kubernetes CLI (`brew install kubectl`)
 - `flux` CLI für Flux GitOps (`brew install fluxcd/tap/flux`)
+- `gh` CLI für GitHub (`brew install gh`)
 
-## Step-by-Step Setup
+## Komplette Step-by-Step Anleitung
 
-### 1. Age Key erstellen
+### 1. Repository klonen und vorbereiten
 
 ```bash
-# Age Key-Pair generieren
+# Repository klonen
+git clone https://github.com/TimourMobi/sops-demo.git
+cd sops-demo
+
+# Age Key erstellen (wird in .gitignore ausgeschlossen)
 age-keygen -o age-key.txt
 
-# Public Key anzeigen (für .sops.yaml)
+# Public Key anzeigen und notieren
 cat age-key.txt | grep "public key"
+# Output: # public key: age18pzu5h6a7u6v73mren28s9a799lemljpfqa7py0uw76c8yh9zvnsu4eg4h
 ```
 
-### 2. SOPS Konfiguration
+### 2. SOPS Konfiguration aktualisieren
 
-Die `.sops.yaml` wurde bereits konfiguriert mit dem Age Public Key:
+```bash
+# .sops.yaml mit dem neuen Public Key aktualisieren
+# Ersetze den age key in .sops.yaml mit deinem Public Key
+vim .sops.yaml
+```
 
+Die `.sops.yaml` sollte so aussehen:
 ```yaml
 creation_rules:
   - path_regex: .*\.yaml$
     encrypted_regex: '^(data|stringData)$'
-    age: age1rrfpte79wdj8tv03c8k7t7sf66vpygz4ydfndqne6vvsscmlhfjswvez9u
+    age: age18pzu5h6a7u6v73mren28s9a799lemljpfqa7py0uw76c8yh9zvnsu4eg4h
 ```
 
-### 3. Secret verschlüsseln
+### 3. Neues Secret mit eigenem Key verschlüsseln
 
 ```bash
-# Unverschlüsseltes Secret erstellen (Beispiel)
+# Unverschlüsseltes Secret erstellen
 cat << EOF > grafana-secret-plain.yaml
 apiVersion: v1
 kind: Secret
@@ -49,69 +60,118 @@ data:
     admin-password: c2VjcmV0MTIz  # secret123 (base64)
 EOF
 
-# Mit SOPS verschlüsseln
+# Mit SOPS verschlüsseln (Age Key Pfad setzen)
 export SOPS_AGE_KEY_FILE=age-key.txt
 sops --encrypt --in-place grafana-secret-plain.yaml
 
 # Verschlüsseltes Secret nach monitoring/ verschieben
-mv grafana-secret-plain.yaml monitoring/grafana-secret.yaml
+cp grafana-secret-plain.yaml monitoring/grafana-secret.yaml
+
+# Temporäre Datei löschen
+rm grafana-secret-plain.yaml
+
+# Änderungen committen und pushen
+git add .
+git commit -m "Update SOPS configuration with new Age key"
+git push
 ```
 
 ### 4. k3d Cluster erstellen
 
 ```bash
-# k3d Cluster mit Ingress Controller erstellen
+# k3d Cluster mit Load Balancer erstellen
 k3d cluster create sops-demo \
   --agents 2 \
   --port "8080:80@loadbalancer" \
   --port "8443:443@loadbalancer"
 
-# Nginx Ingress Controller installieren
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml
+# Cluster-Info anzeigen
+kubectl cluster-info
+
+# Nodes prüfen
+kubectl get nodes
 ```
 
-### 5. Flux Bootstrap
+### 5. GitHub Login und Flux Bootstrap
 
 ```bash
+# GitHub CLI einloggen
+gh auth login
+
+# GitHub Token für Flux exportieren
+export GITHUB_TOKEN=$(gh auth token)
+
 # Flux in den Cluster bootstrappen
-flux bootstrap git \
-  --url=https://github.com/TimourMobi/sops-demo \
+flux bootstrap github \
+  --owner=TimourMobi \
+  --repository=sops-demo \
   --branch=main \
   --path=flux-system
+```
 
-# SOPS Age Key als Secret hinzufügen
+### 6. SOPS Age Key in Kubernetes konfigurieren
+
+```bash
+# SOPS Age Key als Secret in flux-system namespace hinzufügen
 kubectl create secret generic sops-age \
   --namespace=flux-system \
   --from-file=age.agekey=age-key.txt
-```
 
-### 6. Flux für SOPS konfigurieren
-
-```bash
-# Flux Kustomization für SOPS erweitern
+# Flux Kustomization für SOPS Decryption konfigurieren
 kubectl patch kustomization flux-system \
   --namespace flux-system \
   --type merge \
   --patch '{"spec":{"decryption":{"provider":"sops","secretRef":{"name":"sops-age"}}}}'
 ```
 
-### 7. Deployment testen
+### 7. Deployment Status prüfen
 
 ```bash
-# Pods prüfen
+# Flux Reconciliation Status prüfen
+flux get all
+
+# Kustomization speziell prüfen (sollte SOPS decryption zeigen)
+flux get kustomizations
+
+# Warten bis alle Resources "Ready=True" sind
+# Der Output sollte zeigen:
+# kustomization/flux-system    main@sha1:xxxxx    False    True    Applied revision: main@sha1:xxxxx
+```
+
+### 8. Monitoring Deployment testen
+
+```bash
+# Monitoring Namespace prüfen
+kubectl get ns monitoring
+
+# Pods in monitoring namespace prüfen
 kubectl get pods -n monitoring
+
+# Secret wurde entschlüsselt prüfen
+kubectl get secrets -n monitoring
 
 # Grafana Service prüfen
 kubectl get svc -n monitoring
 
-# Grafana über Ingress testen
-echo "127.0.0.1 grafana.local" | sudo tee -a /etc/hosts
-curl -H "Host: grafana.local" http://localhost:8080
+# HelmReleases prüfen
+kubectl get helmreleases -n monitoring
 ```
 
-### 8. Grafana Login
+### 9. Grafana Zugriff via Port-Forward
 
-- **URL**: http://grafana.local:8080 (über k3d Port-Forwarding)
+**WICHTIG**: Erst Port-Forward starten wenn `flux get kustomizations` zeigt dass SOPS erfolgreich entschlüsselt wurde!
+
+```bash
+# Port-Forward zu Grafana Service starten
+kubectl port-forward -n monitoring svc/grafana 3000:80
+
+# In anderem Terminal: Grafana öffnen
+open http://localhost:3000
+```
+
+### 10. Grafana Login
+
+- **URL**: http://localhost:3000
 - **Username**: `admin`
 - **Password**: `secret123`
 

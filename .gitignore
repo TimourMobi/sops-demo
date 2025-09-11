@@ -1,0 +1,6 @@
+# Age private key - NEVER commit this!
+age-key.txt
+
+# Temporary files
+*-plain.yaml
+*.tmp
